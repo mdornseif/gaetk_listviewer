@@ -1,0 +1,21 @@
+{% extends "base_huwawi3.html" %}
+
+{% block breadcrumbs %}
+{% if breadcrumbs is defined %}
+    <ul class="breadcrumb">
+    {% for breadcrumb in breadcrumbs %}
+        {% if loop.last %}
+            <li class="active">{{ breadcrumb }}</li>
+        {% else %}
+            <li><a href="{{ breadcrumb[0] }}">{{ breadcrumb[1]|e }}</a></li>
+        {% endif %}
+    {% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block mainrow -%}<!--sui_listviewer:mainrow-->
+<div class="col-sm-12 maincontent">
+  <div>{% include headtemplate with context %}</div>
+  {% include 'sui_listviewer_table.html' with context %}
+</div>
+<!--sui_listviewer:mainrow-->{% endblock mainrow %}
