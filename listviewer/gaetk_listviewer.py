@@ -13,6 +13,7 @@ Copyright (c) 2016 Cyberlogi. All rights reserved.
 
 import datetime
 import re
+import urlparse
 
 import gaetk.handler
 
@@ -20,13 +21,12 @@ from gaetk import compat
 from gaetk import modelexporter
 from google.appengine.api import users
 
-import main_views
+import main
 
-from modules import bot
-from modules.spezial_ui import sui_models
+# from modules.spezial_fui import sui_models
 
 
-class ListExportHandler(main_views.HuWaWiHandler):
+class ListExportHandler(main.AuthenticatedHandler):
     """Generischer View zum Anzeigen & Exportieren eines Models als Liste."""
 
     template = 'sui_listviewer.html'
@@ -67,20 +67,22 @@ class ListExportHandler(main_views.HuWaWiHandler):
 
     def get_impl(self, typ, additional_context=None):
         query = self.get_query()
-        qmodel = compat.xdb_kind_from_query(query)
-        kind = compat.xdb_kind(qmodel)
+        model_class = compat.xdb_kind_from_query(query)
+        kind = compat.xdb_kind(model_class)
         if not self.filename:
             self.filename = u'%s-%s-%s' % (kind, datetime.datetime.now(), self.credential.uid)
+
         exporter = modelexporter.ModelExporter(
-            qmodel, query, uid=self.credential.uid, **self.exporter_config)
+            model_class, query, uid=self.credential.uid, **self.exporter_config)
+
         typ = typ.strip('/')
         if typ in {'xls', 'csv'}:
             self.check_download_permission()
             self.handle_download(typ, kind, exporter)
         else:
-            loginfo = sui_models.sui_ExportLog.query(
-                sui_models.sui_ExportLog.tablename == kind).order(
-                -sui_models.sui_ExportLog.created_at).fetch_async(10)
+            # loginfo = sui_models.sui_ExportLog.query(
+            #     sui_models.sui_ExportLog.tablename == kind).order(
+            #     -sui_models.sui_ExportLog.created_at).fetch_async(10)
 
             rowtemplate, headtemplate = self.get_rowtemplate(exporter)
 
@@ -90,19 +92,21 @@ class ListExportHandler(main_views.HuWaWiHandler):
                 title=myvalues.get('title', self.title),
                 widetable=self.widetable,
                 filename=self.filename,
-                downloadlog=loginfo.get_result(),
+                downloadlog=[],  # loginfo.get_result(),
                 header=self.header,
                 rowtemplate=rowtemplate,
                 headtemplate=headtemplate,
             )
+
             values.update(self.get_pagination(query))
 
             if additional_context:
                 values.update(additional_context)
 
             if self.request.path.endswith('.html'):
-                # needed to construct links
-                values['listviewer_urlbase'] = self.request.path[:-5]
+                parsed_url = urlparse.urlparse(self.request.path)
+                values['listviewer_urlbase'] = '://' + parsed_url.netloc + parsed_url.path
+
             self.render(values, self.template)
 
     def check_download_permission(self):
@@ -113,11 +117,6 @@ class ListExportHandler(main_views.HuWaWiHandler):
                 if self.has_permission(permission):
                     break
             else:
-                if '@' in self.credential.uid:
-                    bot.say("{} kann nicht downloaden: {} {}".format(
-                        self.credential, self.request.url,
-                        self.required_download_permission),
-                        channel='#huwawi')
                 raise gaetk.handler.HTTP403_Forbidden(
                     u'Sie benötigen eine der folgenden Berechtigungen: {}'.format(
                         u', '.join(self.required_download_permission)))
@@ -178,14 +177,15 @@ def ListExportFactory(title, query, BaseClass=ListExportHandler, **kwargs):
 
 def log_export(tablename, credential, request, contenttype, title):
     """Protokolliere, dass jemand Daten exportiert."""
-    if request.headers.get('User-Agent', '').startswith('resttest'):
-        return   # ignore resttest
 
-    sui_models.sui_ExportLog(
-        tablename=tablename,
-        title=title,
-        uid=credential.uid,
-        remote_addr=request.remote_addr,
-        user_agent=request.headers.get('User-Agent', '?'),
-        contenttype=contenttype
-    ).put()
+    # if request.headers.get('User-Agent', '').startswith('resttest'):
+    #     return   # ignore resttest
+
+    # sui_models.sui_ExportLog(
+    #     tablename=tablename,
+    #     title=title,
+    #     uid=credential.uid,
+    #     remote_addr=request.remote_addr,
+    #     user_agent=request.headers.get('User-Agent', '?'),
+    #     contenttype=contenttype
+    # ).put()
