@@ -20,10 +20,22 @@ import gaetk.handler
 from gaetk import compat
 from gaetk import modelexporter
 from google.appengine.api import users
+from google.appengine.ext import ndb
 
 import main
 
-# from modules.spezial_fui import sui_models
+
+class gaetk_ExportLog(ndb.Model):
+    """Protokollierung eines Download-Vorgangs."""
+
+    tablename = ndb.StringProperty(required=True)
+    title = ndb.StringProperty()
+    uid = ndb.StringProperty(required=True)
+    klarname = ndb.StringProperty(required=False, default='')
+    remote_addr = ndb.StringProperty(required=False)
+    user_agent = ndb.StringProperty(required=False)
+    contenttype = ndb.StringProperty(required=False)
+    created_at = ndb.DateTimeProperty(auto_now_add=True)
 
 
 class ListExportHandler(main.AuthenticatedHandler):
@@ -80,9 +92,9 @@ class ListExportHandler(main.AuthenticatedHandler):
             self.check_download_permission()
             self.handle_download(typ, kind, exporter)
         else:
-            # loginfo = sui_models.sui_ExportLog.query(
-            #     sui_models.sui_ExportLog.tablename == kind).order(
-            #     -sui_models.sui_ExportLog.created_at).fetch_async(10)
+            loginfo = gaetk_ExportLog.query(
+                gaetk_ExportLog.tablename == kind).order(
+                -gaetk_ExportLog.created_at).fetch_async(10)
 
             rowtemplate, headtemplate = self.get_rowtemplate(exporter)
 
@@ -92,7 +104,7 @@ class ListExportHandler(main.AuthenticatedHandler):
                 title=myvalues.get('title', self.title),
                 widetable=self.widetable,
                 filename=self.filename,
-                downloadlog=[],  # loginfo.get_result(),
+                downloadlog=loginfo.get_result(),
                 header=self.header,
                 rowtemplate=rowtemplate,
                 headtemplate=headtemplate,
@@ -178,14 +190,14 @@ def ListExportFactory(title, query, BaseClass=ListExportHandler, **kwargs):
 def log_export(tablename, credential, request, contenttype, title):
     """Protokolliere, dass jemand Daten exportiert."""
 
-    # if request.headers.get('User-Agent', '').startswith('resttest'):
-    #     return   # ignore resttest
+    if request.headers.get('User-Agent', '').startswith('resttest'):
+        return   # ignore resttest
 
-    # sui_models.sui_ExportLog(
-    #     tablename=tablename,
-    #     title=title,
-    #     uid=credential.uid,
-    #     remote_addr=request.remote_addr,
-    #     user_agent=request.headers.get('User-Agent', '?'),
-    #     contenttype=contenttype
-    # ).put()
+    gaetk_ExportLog(
+        tablename=tablename,
+        title=title,
+        uid=credential.uid,
+        remote_addr=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', '?'),
+        contenttype=contenttype
+    ).put()
