@@ -60,6 +60,10 @@ class ListExportHandler(main.AuthenticatedHandler):
             return self.query()
         raise NotImplementedError
 
+    def prepare_query(self):
+        u"""Query aufbereiten, z.B. mit Filtern"""
+        return self.get_query()
+
     def get_pagination(self, query):
         """Paginierung für die HTML-Anzeige auslösen."""
         return self.paginate(query, defaultcount=30, calctotal=True)
@@ -78,14 +82,14 @@ class ListExportHandler(main.AuthenticatedHandler):
         self.get_impl(typ)
 
     def get_impl(self, typ, additional_context=None):
-        query = self.get_query()
+        query = self.prepare_query()
         model_class = compat.xdb_kind_from_query(query)
         kind = compat.xdb_kind(model_class)
         if not self.filename:
             self.filename = u'%s-%s-%s' % (kind, datetime.datetime.now(), self.credential.uid)
 
         exporter = modelexporter.ModelExporter(
-            model_class, query, uid=self.credential.uid, **self.exporter_config)
+            model_class, query=query, uid=self.credential.uid, **self.exporter_config)
 
         typ = typ.strip('/')
         if typ in {'xls', 'csv'}:
@@ -185,6 +189,21 @@ def ListExportFactory(title, query, BaseClass=ListExportHandler, **kwargs):
         kwargs['required_permission'] = ['generic_permission']
     kwargs.update(title=title, query=query)
     return type(str(classname), (BaseClass,), kwargs,)
+
+
+class FilteringListExportHandler(ListExportHandler):
+    u"""Filtern von Queries per fester Konfiguration"""
+
+    filter_config = {}
+
+    def prepare_query(self):
+        u"""Wende Filter auf Query an."""
+        query = self.get_query()
+        key = self.request.get('filter', '')
+        if key in self.filter_config:
+            config = self.filter_config[key]
+            query = query.filter(*config.get('filters', [])).order(*config.get('orders', []))
+        return query
 
 
 def log_export(tablename, credential, request, contenttype, title):
