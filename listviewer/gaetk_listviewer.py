@@ -13,20 +13,32 @@ Copyright (c) 2016 Cyberlogi. All rights reserved.
 
 import datetime
 import re
+import urlparse
 
 import gaetk.handler
 
 from gaetk import compat
 from gaetk import modelexporter
 from google.appengine.api import users
+from google.appengine.ext import ndb
 
-import main_views
-
-from modules import bot
-from modules.spezial_ui import sui_models
+import main
 
 
-class ListExportHandler(main_views.HuWaWiHandler):
+class gaetk_ExportLog(ndb.Model):
+    """Protokollierung eines Download-Vorgangs."""
+
+    tablename = ndb.StringProperty(required=True)
+    title = ndb.StringProperty()
+    uid = ndb.StringProperty(required=True)
+    klarname = ndb.StringProperty(required=False, default='')
+    remote_addr = ndb.StringProperty(required=False)
+    user_agent = ndb.StringProperty(required=False)
+    contenttype = ndb.StringProperty(required=False)
+    created_at = ndb.DateTimeProperty(auto_now_add=True)
+
+
+class ListExportHandler(main.AuthenticatedHandler):
     """Generischer View zum Anzeigen & Exportieren eines Models als Liste."""
 
     template = 'sui_listviewer.html'
@@ -48,6 +60,10 @@ class ListExportHandler(main_views.HuWaWiHandler):
             return self.query()
         raise NotImplementedError
 
+    def prepare_query(self):
+        u"""Query aufbereiten, z.B. mit Filtern"""
+        return self.get_query()
+
     def get_pagination(self, query):
         """Paginierung für die HTML-Anzeige auslösen."""
         return self.paginate(query, defaultcount=30, calctotal=True)
@@ -66,21 +82,23 @@ class ListExportHandler(main_views.HuWaWiHandler):
         self.get_impl(typ)
 
     def get_impl(self, typ, additional_context=None):
-        query = self.get_query()
-        qmodel = compat.xdb_kind_from_query(query)
-        kind = compat.xdb_kind(qmodel)
+        query = self.prepare_query()
+        model_class = compat.xdb_kind_from_query(query)
+        kind = compat.xdb_kind(model_class)
         if not self.filename:
             self.filename = u'%s-%s-%s' % (kind, datetime.datetime.now(), self.credential.uid)
+
         exporter = modelexporter.ModelExporter(
-            qmodel, query, uid=self.credential.uid, **self.exporter_config)
+            model_class, query=query, uid=self.credential.uid, **self.exporter_config)
+
         typ = typ.strip('/')
         if typ in {'xls', 'csv'}:
             self.check_download_permission()
             self.handle_download(typ, kind, exporter)
         else:
-            loginfo = sui_models.sui_ExportLog.query(
-                sui_models.sui_ExportLog.tablename == kind).order(
-                -sui_models.sui_ExportLog.created_at).fetch_async(10)
+            loginfo = gaetk_ExportLog.query(
+                gaetk_ExportLog.tablename == kind).order(
+                -gaetk_ExportLog.created_at).fetch_async(10)
 
             rowtemplate, headtemplate = self.get_rowtemplate(exporter)
 
@@ -95,14 +113,16 @@ class ListExportHandler(main_views.HuWaWiHandler):
                 rowtemplate=rowtemplate,
                 headtemplate=headtemplate,
             )
+
             values.update(self.get_pagination(query))
 
             if additional_context:
                 values.update(additional_context)
 
             if self.request.path.endswith('.html'):
-                # needed to construct links
-                values['listviewer_urlbase'] = self.request.path[:-5]
+                parsed_url = urlparse.urlparse(self.request.path)
+                values['listviewer_urlbase'] = '://' + parsed_url.netloc + parsed_url.path
+
             self.render(values, self.template)
 
     def check_download_permission(self):
@@ -113,11 +133,6 @@ class ListExportHandler(main_views.HuWaWiHandler):
                 if self.has_permission(permission):
                     break
             else:
-                if '@' in self.credential.uid:
-                    bot.say("{} kann nicht downloaden: {} {}".format(
-                        self.credential, self.request.url,
-                        self.required_download_permission),
-                        channel='#huwawi')
                 raise gaetk.handler.HTTP403_Forbidden(
                     u'Sie benötigen eine der folgenden Berechtigungen: {}'.format(
                         u', '.join(self.required_download_permission)))
@@ -176,12 +191,28 @@ def ListExportFactory(title, query, BaseClass=ListExportHandler, **kwargs):
     return type(str(classname), (BaseClass,), kwargs,)
 
 
+class FilteringListExportHandler(ListExportHandler):
+    u"""Filtern von Queries per fester Konfiguration"""
+
+    filter_config = {}
+
+    def prepare_query(self):
+        u"""Wende Filter auf Query an."""
+        query = self.get_query()
+        key = self.request.get('filter', '')
+        if key in self.filter_config:
+            config = self.filter_config[key]
+            query = query.filter(*config.get('filters', [])).order(*config.get('orders', []))
+        return query
+
+
 def log_export(tablename, credential, request, contenttype, title):
     """Protokolliere, dass jemand Daten exportiert."""
+
     if request.headers.get('User-Agent', '').startswith('resttest'):
         return   # ignore resttest
 
-    sui_models.sui_ExportLog(
+    gaetk_ExportLog(
         tablename=tablename,
         title=title,
         uid=credential.uid,
